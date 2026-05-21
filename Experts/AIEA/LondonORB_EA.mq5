@@ -23,12 +23,12 @@ input int             InpDeviation        = 20;
 input ENUM_TIMEFRAMES InpTimeframe        = PERIOD_M5;
 input bool            InpDebugMode        = false;
 
-input group "Session (server time, Exness GMT+0)"
-input int  InpORStartHour    = 8;
+input group "Session (server time) — OR 06:00 best on Exness data (2024+2025 validated)"
+input int  InpORStartHour    = 6;
 input int  InpORStartMin     = 0;
-input int  InpOREndHour       = 8;
+input int  InpOREndHour       = 6;
 input int  InpOREndMin        = 30;
-input int  InpTradeEndHour    = 12;
+input int  InpTradeEndHour    = 10;
 input int  InpTradeEndMin     = 0;
 input bool InpForceCloseEnable= true;
 input int  InpForceCloseHour  = 20;
@@ -520,6 +520,10 @@ int OnInit()
                _Symbol,
                TimeToString(TimeTradeServer(), TIME_DATE | TIME_MINUTES),
                (int)(offsetSec / 3600));
+   PrintFormat("LondonORB inputs | OR=%02d:%02d-%02d:%02d tradeEnd=%02d:%02d TP_R=%.2f SLmode=%d retest=%s",
+               InpORStartHour, InpORStartMin, InpOREndHour, InpOREndMin,
+               InpTradeEndHour, InpTradeEndMin, InpTP_R, (int)InpSLMode,
+               (InpUseRetest ? "Y" : "N"));
 
    EventSetTimer(1);
    return INIT_SUCCEEDED;
