@@ -19,7 +19,7 @@ enum ENUM_ENTRY_STATE { ENTRY_IDLE, ENTRY_ARMED, ENTRY_DONE };
 input group "General"
 input long            InpMagic            = 20260521;
 input int             InpDeviation        = 20;
-input int             InpMaxTradesPerDay  = 1;
+// one trade per day is enforced by g_tradedToday + ENTRY_DONE (no separate input)
 input ENUM_TIMEFRAMES InpTimeframe        = PERIOD_M5;
 input bool            InpDebugMode        = false;
 
@@ -547,6 +547,8 @@ void OnTick()
       g_armedBarsElapsed= 0;
       g_ddStopped       = false;
       g_newsWarned      = false;
+      g_entryPrice      = 0.0;
+      g_initialRisk     = 0.0;
    }
 
    // Manage any open position every tick
@@ -567,8 +569,8 @@ void OnTick()
       return;
    }
 
-   // Daily drawdown circuit breaker
-   if(IsDailyDDExceeded())
+   // Daily drawdown circuit breaker (latches for the rest of the day once tripped)
+   if(g_ddStopped || IsDailyDDExceeded())
    {
       g_ddStopped = true;
       if(InpDDAction == DD_CLOSE_ALL) CloseAll();
