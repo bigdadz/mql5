@@ -112,7 +112,6 @@ struct SymbolState
    bool             tradedToday;
    int              atrHandle;
    int              trendEmaHandle;
-   double           entryPrice;     // for R math
    double           initialRisk;    // price distance entry->initial SL
 };
 SymbolState g_st[];   // index-aligned with g_symbol[]
@@ -142,6 +141,11 @@ int OnInit()
       g_orStartH[i] = (int)StringToInteger(shs[i]);
       g_orStartM[i] = 0;
       int win       = (int)StringToInteger(wins[i]);
+      if(g_orStartH[i] < 0 || g_orStartH[i] > 23 || win <= 0)
+      {
+         PrintFormat("PortfolioORB: invalid OR config for %s (start=%d win=%d) — check CSV", g_symbol[i], g_orStartH[i], win);
+         return INIT_FAILED;
+      }
       int endTotal  = g_orStartH[i]*60 + g_orStartM[i] + win;
       g_orEndH[i]   = endTotal / 60;
       g_orEndM[i]   = endTotal % 60;
@@ -159,7 +163,6 @@ int OnInit()
       g_st[i].armedLevel       = 0.0;
       g_st[i].armedBarsElapsed = 0;
       g_st[i].tradedToday      = false;
-      g_st[i].entryPrice       = 0.0;
       g_st[i].initialRisk      = 0.0;
 
       g_st[i].atrHandle = iATR(g_symbol[i], InpTimeframe, InpATRPeriod);
@@ -382,17 +385,6 @@ bool ValidateStops(int i, double slPoints)
    return slPoints >= minDist;
 }
 
-// True if this EA holds an open position on symbol i; fills dir if so.
-bool HasOpenPosition(int i, ENUM_SIGNAL &dir)
-{
-   dir = SIGNAL_NONE;
-   if(!PositionSelect(g_symbol[i])) return false;
-   if(PositionGetInteger(POSITION_MAGIC) != InpMagic) return false;
-   long t = PositionGetInteger(POSITION_TYPE);
-   dir = (t == POSITION_TYPE_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
-   return true;
-}
-
 void OpenTrade(int i, ENUM_SIGNAL signal)
 {
    double ask   = SymbolInfoDouble(g_symbol[i], SYMBOL_ASK);
@@ -423,7 +415,6 @@ void OpenTrade(int i, ENUM_SIGNAL signal)
              : trade.Sell(lot, g_symbol[i], 0.0, sl, tp, "PortfolioORB");
    if(ok)
    {
-      g_st[i].entryPrice  = entry;
       g_st[i].initialRisk = slDist;
       g_st[i].tradedToday = true;
       g_st[i].entryState  = ENTRY_DONE;
@@ -464,7 +455,13 @@ void ManageTrailing(int i)
       double be = NormalizeDouble(entry, dg);
       bool needBE = (type == POSITION_TYPE_BUY)  ? (curSL < be)
                   : (type == POSITION_TYPE_SELL) ? (curSL > be || curSL == 0) : false;
-      if(needBE) { trade.PositionModify(g_symbol[i], be, curTP); return; }
+      if(needBE)
+      {
+         if(!trade.PositionModify(g_symbol[i], be, curTP) && InpDebugMode)
+            PrintFormat("PortfolioORB %s: BE modify FAILED retcode=%d (%s)", g_symbol[i],
+                        trade.ResultRetcode(), trade.ResultRetcodeDescription());
+         return;
+      }
    }
    if(rMult >= InpTrailStartR)
    {
@@ -473,7 +470,9 @@ void ManageTrailing(int i)
       newSL = NormalizeDouble(newSL, dg);
       bool needTrail = (type == POSITION_TYPE_BUY)  ? (newSL > curSL)
                      : (type == POSITION_TYPE_SELL) ? (newSL < curSL || curSL == 0) : false;
-      if(needTrail) trade.PositionModify(g_symbol[i], newSL, curTP);
+      if(needTrail && !trade.PositionModify(g_symbol[i], newSL, curTP) && InpDebugMode)
+         PrintFormat("PortfolioORB %s: trail modify FAILED retcode=%d (%s)", g_symbol[i],
+                     trade.ResultRetcode(), trade.ResultRetcodeDescription());
    }
 }
 
@@ -528,11 +527,6 @@ void UpdateDashboard()
 
 void ProcessSymbol(int i)
 {
-   // Manage any open position every tick
-   ManageTrailing(i);
-
-   if(InpForceCloseEnable && PastForceClose()) { CloseSym(i); return; }
-
    if(!IsNewBar(i)) return;   // entry logic only on a new completed bar (per symbol)
 
    int nowMin = MinutesOfDay(TimeCurrent());
@@ -555,6 +549,7 @@ void ProcessSymbol(int i)
             g_st[i].armedDir         = sig;
             g_st[i].armedLevel       = (sig == SIGNAL_BUY) ? g_st[i].orHigh : g_st[i].orLow;
             g_st[i].armedBarsElapsed = 0;
+            if(InpDebugMode) Print("PortfolioORB ", g_symbol[i], ": ARMED ", (sig==SIGNAL_BUY?"BUY":"SELL"));
          }
          else OpenTrade(i, sig);
       }
@@ -562,7 +557,11 @@ void ProcessSymbol(int i)
    else if(g_st[i].entryState == ENTRY_ARMED)
    {
       g_st[i].armedBarsElapsed++;
-      if(g_st[i].armedBarsElapsed > InpRetestTimeoutBars) g_st[i].entryState = ENTRY_IDLE;
+      if(g_st[i].armedBarsElapsed > InpRetestTimeoutBars)
+      {
+         g_st[i].entryState = ENTRY_IDLE;
+         if(InpDebugMode) Print("PortfolioORB ", g_symbol[i], ": retest timeout — disarmed");
+      }
       else if(RetestConfirmed(i, g_st[i].armedDir) && !NewsBlocked() && SpreadOK(i)
               && !CorrBlocked(i, g_st[i].armedDir))
          OpenTrade(i, g_st[i].armedDir);
@@ -583,9 +582,15 @@ void OnTick()
          g_st[i].entryState       = ENTRY_IDLE;
          g_st[i].armedDir         = SIGNAL_NONE;
          g_st[i].armedBarsElapsed = 0;
-         g_st[i].entryPrice       = 0.0;
          g_st[i].initialRisk      = 0.0;
       }
+   }
+
+   // Manage open positions + force-close ALWAYS, regardless of DD-stop state.
+   for(int i = 0; i < g_symCount; i++)
+   {
+      ManageTrailing(i);
+      if(InpForceCloseEnable && PastForceClose()) CloseSym(i);
    }
 
    // Account-level daily DD breaker — checked every tick; latches for the day.
