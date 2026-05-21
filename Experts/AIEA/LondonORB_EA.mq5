@@ -191,6 +191,30 @@ bool RangeSizeOK()
    return (size >= InpMinRangeATR * atr && size <= InpMaxRangeATR * atr);
 }
 
+//=== SIGNAL ========================================================
+double BufferValue()
+{
+   if(InpBufferMode == BUFFER_ATR)
+      return GetATR() * InpBufferATRmult;
+   return InpBufferPoints * _Point;
+}
+
+// Uses the last completed bar (index 1) close when InpRequireBarClose,
+// otherwise the current price. Returns direction of a confirmed breakout.
+ENUM_SIGNAL CheckBreakout()
+{
+   double buf = BufferValue();
+   if(buf <= 0) return SIGNAL_NONE;
+
+   double ref = InpRequireBarClose
+                ? iClose(_Symbol, InpTimeframe, 1)
+                : iClose(_Symbol, InpTimeframe, 0);
+
+   if(ref > g_orHigh + buf) return SIGNAL_BUY;
+   if(ref < g_orLow  - buf) return SIGNAL_SELL;
+   return SIGNAL_NONE;
+}
+
 //=== LIFECYCLE =====================================================
 int OnInit()
 {
