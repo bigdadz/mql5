@@ -215,6 +215,73 @@ ENUM_SIGNAL CheckBreakout()
    return SIGNAL_NONE;
 }
 
+//=== FILTERS =======================================================
+bool TrendFilterOK(ENUM_SIGNAL dir)
+{
+   if(!InpUseTrendFilter) return true;
+   double ema[];
+   if(CopyBuffer(g_trendEmaHandle, 0, 1, 1, ema) < 1) return false;
+   double close = iClose(_Symbol, InpTrendTF, 1);
+   if(dir == SIGNAL_BUY)  return close > ema[0];
+   if(dir == SIGNAL_SELL) return close < ema[0];
+   return false;
+}
+
+// True if a high-impact event for a watched currency falls within
+// [now - minsAfter, now + minsBefore]. Gracefully no-ops (returns false,
+// warns once) if calendar data is unavailable (common in Strategy Tester).
+bool NewsBlocked()
+{
+   if(!InpUseNewsFilter) return false;
+
+   datetime now  = TimeCurrent();
+   datetime from = now - InpNewsMinsAfter  * 60;
+   datetime to   = now + InpNewsMinsBefore * 60;
+
+   MqlCalendarValue values[];
+   int n = CalendarValueHistory(values, from, to, NULL, NULL);
+   if(n <= 0)
+   {
+      if(!g_newsWarned)
+      {
+         Print("LondonORB: news calendar unavailable/empty — news filter inactive this run");
+         g_newsWarned = true;
+      }
+      return false;
+   }
+
+   for(int i = 0; i < n; i++)
+   {
+      MqlCalendarEvent event;
+      if(!CalendarEventById(values[i].event_id, event)) continue;
+      if(event.importance != CALENDAR_IMPORTANCE_HIGH)  continue;
+
+      MqlCalendarCountry country;
+      if(!CalendarCountryById(event.country_id, country)) continue;
+      if(StringFind(InpNewsCurrencies, country.currency) < 0) continue;
+
+      return true;
+   }
+   return false;
+}
+
+// Stage 2 of the retest state machine: price pulled back near the broken
+// level (within tolerance) and the last completed bar closed back in the
+// armed direction.
+bool RetestConfirmed(ENUM_SIGNAL dir)
+{
+   double tol = InpRetestTolerancePoints * _Point;
+   double c   = iClose(_Symbol, InpTimeframe, 1);
+   double lo  = iLow(_Symbol,  InpTimeframe, 1);
+   double hi  = iHigh(_Symbol, InpTimeframe, 1);
+
+   if(dir == SIGNAL_BUY)
+      return (lo <= g_armedLevel + tol) && (c > g_armedLevel);
+   if(dir == SIGNAL_SELL)
+      return (hi >= g_armedLevel - tol) && (c < g_armedLevel);
+   return false;
+}
+
 //=== LIFECYCLE =====================================================
 int OnInit()
 {
