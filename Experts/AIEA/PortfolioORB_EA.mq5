@@ -204,5 +204,147 @@ void OnDeinit(const int reason)
    Print("PortfolioORB deinitialized. Reason: ", reason);
 }
 
+int MinutesOfDay(datetime t)
+{
+   MqlDateTime d; TimeToStruct(t, d);
+   return d.hour*60 + d.min;
+}
+
+// Per-symbol new bar using that symbol's series.
+bool IsNewBar(int i)
+{
+   datetime t = iTime(g_symbol[i], InpTimeframe, 0);
+   if(t != g_st[i].lastBarTime) { g_st[i].lastBarTime = t; return true; }
+   return false;
+}
+
+bool IsNewDay()
+{
+   MqlDateTime d; TimeToStruct(TimeCurrent(), d);
+   if(d.day_of_year != g_lastDay) { g_lastDay = d.day_of_year; return true; }
+   return false;
+}
+
+bool InORWindow(int i)
+{
+   int m = MinutesOfDay(TimeCurrent());
+   return (m >= g_orStartH[i]*60 + g_orStartM[i] && m < g_orEndH[i]*60 + g_orEndM[i]);
+}
+
+bool InTradingWindow(int i)
+{
+   int m       = MinutesOfDay(TimeCurrent());
+   int orEnd   = g_orEndH[i]*60 + g_orEndM[i];
+   return (m >= orEnd && m < orEnd + InpTradeWindowMins);
+}
+
+bool PastForceClose()
+{
+   int m = MinutesOfDay(TimeCurrent());
+   return m >= InpForceCloseHour*60 + InpForceCloseMin;
+}
+
+double GetATR(int i)
+{
+   double buf[];
+   if(CopyBuffer(g_st[i].atrHandle, 0, 1, 1, buf) < 1) return 0.0;
+   return buf[0];
+}
+
+void FinalizeRange(int i)
+{
+   datetime now = TimeCurrent();
+   MqlDateTime d; TimeToStruct(now, d);
+   datetime dayStart = now - (d.hour*3600 + d.min*60 + d.sec);
+   datetime orStart  = dayStart + (g_orStartH[i]*3600 + g_orStartM[i]*60);
+   datetime orEnd    = dayStart + (g_orEndH[i]*3600   + g_orEndM[i]*60);
+
+   MqlRates rates[];
+   int copied = CopyRates(g_symbol[i], InpTimeframe, orStart, orEnd - 1, rates);
+   if(copied <= 0) { g_st[i].orHigh=0.0; g_st[i].orLow=0.0; g_st[i].rangeReady=false; return; }
+
+   double hi = -DBL_MAX, lo = DBL_MAX;
+   for(int k = 0; k < copied; k++) { hi = MathMax(hi, rates[k].high); lo = MathMin(lo, rates[k].low); }
+   g_st[i].orHigh = hi; g_st[i].orLow = lo; g_st[i].rangeReady = true;
+}
+
+bool RangeSizeOK(int i)
+{
+   if(!InpUseRangeFilter) return true;
+   double atr = GetATR(i);
+   if(atr <= 0) return false;
+   double size = g_st[i].orHigh - g_st[i].orLow;
+   return (size >= InpMinRangeATR*atr && size <= InpMaxRangeATR*atr);
+}
+
+double SymPoint(int i) { return SymbolInfoDouble(g_symbol[i], SYMBOL_POINT); }
+int    SymDigits(int i){ return (int)SymbolInfoInteger(g_symbol[i], SYMBOL_DIGITS); }
+
+double BufferValue(int i)
+{
+   if(InpBufferMode == BUFFER_ATR) return GetATR(i) * InpBufferATRmult;
+   return InpBufferPoints * SymPoint(i);
+}
+
+ENUM_SIGNAL CheckBreakout(int i)
+{
+   double buf = BufferValue(i);
+   if(buf <= 0) return SIGNAL_NONE;
+   double ref = InpRequireBarClose ? iClose(g_symbol[i], InpTimeframe, 1)
+                                   : iClose(g_symbol[i], InpTimeframe, 0);
+   if(ref > g_st[i].orHigh + buf) return SIGNAL_BUY;
+   if(ref < g_st[i].orLow  - buf) return SIGNAL_SELL;
+   return SIGNAL_NONE;
+}
+
+bool TrendFilterOK(int i, ENUM_SIGNAL dir)
+{
+   if(!InpUseTrendFilter) return true;
+   double ema[];
+   if(CopyBuffer(g_st[i].trendEmaHandle, 0, 1, 1, ema) < 1) return false;
+   double close = iClose(g_symbol[i], InpTrendTF, 1);
+   if(dir == SIGNAL_BUY)  return close > ema[0];
+   if(dir == SIGNAL_SELL) return close < ema[0];
+   return false;
+}
+
+bool RetestConfirmed(int i, ENUM_SIGNAL dir)
+{
+   double tol = InpRetestTolerancePoints * SymPoint(i);
+   double c   = iClose(g_symbol[i], InpTimeframe, 1);
+   double lo  = iLow(g_symbol[i],  InpTimeframe, 1);
+   double hi  = iHigh(g_symbol[i], InpTimeframe, 1);
+   if(dir == SIGNAL_BUY)  return (lo <= g_st[i].armedLevel + tol) && (c > g_st[i].armedLevel);
+   if(dir == SIGNAL_SELL) return (hi >= g_st[i].armedLevel - tol) && (c < g_st[i].armedLevel);
+   return false;
+}
+
+// News filter is time-based and account-global (uses InpNewsCurrencies). Unchanged from single EA.
+bool NewsBlocked()
+{
+   if(!InpUseNewsFilter) return false;
+   datetime now = TimeCurrent();
+   datetime from = now - InpNewsMinsAfter*60;
+   datetime to   = now + InpNewsMinsBefore*60;
+   MqlCalendarValue values[];
+   int nv = CalendarValueHistory(values, from, to, NULL, NULL);
+   if(nv <= 0)
+   {
+      if(!g_newsWarned) { Print("PortfolioORB: news calendar unavailable — filter inactive this run"); g_newsWarned=true; }
+      return false;
+   }
+   for(int k = 0; k < nv; k++)
+   {
+      MqlCalendarEvent ev;
+      if(!CalendarEventById(values[k].event_id, ev)) continue;
+      if(ev.importance != CALENDAR_IMPORTANCE_HIGH)  continue;
+      MqlCalendarCountry country;
+      if(!CalendarCountryById(ev.country_id, country)) continue;
+      if(StringFind("," + InpNewsCurrencies + ",", "," + country.currency + ",") < 0) continue;
+      return true;
+   }
+   return false;
+}
+
 void OnTick()  { }
 void OnTimer() { }
