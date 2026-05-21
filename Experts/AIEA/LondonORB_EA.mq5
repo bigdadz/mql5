@@ -369,9 +369,7 @@ void OpenTrade(ENUM_SIGNAL signal)
    sl = NormalizeDouble(sl, _Digits);
    tp = NormalizeDouble(tp, _Digits);
 
-   trade.SetExpertMagicNumber(InpMagic);
-   trade.SetDeviationInPoints(InpDeviation);
-
+   // trade is fully configured once in OnInit (magic, deviation, filling mode)
    bool ok = (signal == SIGNAL_BUY)
              ? trade.Buy(lot, _Symbol, 0.0, sl, tp, "LondonORB")
              : trade.Sell(lot, _Symbol, 0.0, sl, tp, "LondonORB");
@@ -382,14 +380,18 @@ void OpenTrade(ENUM_SIGNAL signal)
       g_initialRisk = slDist;
       g_tradedToday = true;
       g_entryState  = ENTRY_DONE;
-      PrintFormat("LondonORB: %s lot=%s SL=%s TP=%s",
+      PrintFormat("LondonORB: %s lot=%s entry=%s SL=%s TP=%s",
                   (signal == SIGNAL_BUY ? "BUY" : "SELL"),
-                  DoubleToString(lot, 2),
+                  DoubleToString(lot, 2), DoubleToString(entry, _Digits),
                   DoubleToString(sl, _Digits), DoubleToString(tp, _Digits));
    }
    else
+   {
+      // On failure g_tradedToday stays false: the caller may retry on the next
+      // bar within the trading window (resilience to transient/requote errors).
       PrintFormat("LondonORB: open FAILED retcode=%d (%s)",
                   trade.ResultRetcode(), trade.ResultRetcodeDescription());
+   }
 }
 
 //=== LIFECYCLE =====================================================
@@ -415,6 +417,7 @@ int OnInit()
 
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(InpDeviation);
+   trade.SetTypeFillingBySymbol(_Symbol);   // Exness/ECN need IOC/RETURN, not the FOK default
 
    g_dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    g_lastDay        = -1;
