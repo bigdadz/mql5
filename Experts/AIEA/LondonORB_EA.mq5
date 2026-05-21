@@ -319,6 +319,79 @@ bool IsDailyDDExceeded()
    return ddPct >= InpMaxDailyDDPercent;
 }
 
+//=== TRADE =========================================================
+bool SpreadOK()
+{
+   if(InpMaxSpreadPoints <= 0) return true;
+   long sp = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   return sp <= InpMaxSpreadPoints;
+}
+
+// Ensure the stop distance respects broker stops level + spread.
+bool ValidateStops(double slPoints)
+{
+   long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   long spread     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   double minDist  = (double)(MathMax(stopsLevel, spread) + 10);
+   return slPoints >= minDist;
+}
+
+void OpenTrade(ENUM_SIGNAL signal)
+{
+   double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double entry = (signal == SIGNAL_BUY) ? ask : bid;
+
+   double slBuf = InpSLBufferPoints * _Point;
+   double sl;
+   if(InpSLMode == SL_RANGE_OPPOSITE)
+      sl = (signal == SIGNAL_BUY) ? (g_orLow - slBuf) : (g_orHigh + slBuf);
+   else // SL_ATR
+   {
+      double a = GetATR();
+      sl = (signal == SIGNAL_BUY) ? (entry - a * InpSLATRmult)
+                                  : (entry + a * InpSLATRmult);
+   }
+
+   double slDist   = MathAbs(entry - sl);
+   double slPoints = slDist / _Point;
+   if(!ValidateStops(slPoints))
+   {
+      if(InpDebugMode) Print("LondonORB: SL too tight for stops level — skipping");
+      return;
+   }
+
+   double tp  = (signal == SIGNAL_BUY) ? (entry + InpTP_R * slDist)
+                                       : (entry - InpTP_R * slDist);
+   double lot = CalculateLot(slPoints);
+   if(lot <= 0) { if(InpDebugMode) Print("LondonORB: lot=0 — skipping"); return; }
+
+   sl = NormalizeDouble(sl, _Digits);
+   tp = NormalizeDouble(tp, _Digits);
+
+   trade.SetExpertMagicNumber(InpMagic);
+   trade.SetDeviationInPoints(InpDeviation);
+
+   bool ok = (signal == SIGNAL_BUY)
+             ? trade.Buy(lot, _Symbol, 0.0, sl, tp, "LondonORB")
+             : trade.Sell(lot, _Symbol, 0.0, sl, tp, "LondonORB");
+
+   if(ok)
+   {
+      g_entryPrice  = entry;
+      g_initialRisk = slDist;
+      g_tradedToday = true;
+      g_entryState  = ENTRY_DONE;
+      PrintFormat("LondonORB: %s lot=%s SL=%s TP=%s",
+                  (signal == SIGNAL_BUY ? "BUY" : "SELL"),
+                  DoubleToString(lot, 2),
+                  DoubleToString(sl, _Digits), DoubleToString(tp, _Digits));
+   }
+   else
+      PrintFormat("LondonORB: open FAILED retcode=%d (%s)",
+                  trade.ResultRetcode(), trade.ResultRetcodeDescription());
+}
+
 //=== LIFECYCLE =====================================================
 int OnInit()
 {
