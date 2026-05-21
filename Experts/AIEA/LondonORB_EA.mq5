@@ -143,6 +143,52 @@ bool PastForceClose()
    return m >= InpForceCloseHour * 60 + InpForceCloseMin;
 }
 
+//=== RANGE =========================================================
+double GetATR()
+{
+   double buf[];
+   if(CopyBuffer(g_atrHandle, 0, 1, 1, buf) < 1) return 0.0;
+   return buf[0];
+}
+
+// Compute Opening Range high/low from completed bars in [OR start, OR end).
+void FinalizeRange()
+{
+   datetime now = TimeCurrent();
+   MqlDateTime d;
+   TimeToStruct(now, d);
+   datetime dayStart = now - (d.hour * 3600 + d.min * 60 + d.sec);
+   datetime orStart  = dayStart + (InpORStartHour * 3600 + InpORStartMin * 60);
+   datetime orEnd    = dayStart + (InpOREndHour   * 3600 + InpOREndMin   * 60);
+
+   MqlRates rates[];
+   int copied = CopyRates(_Symbol, InpTimeframe, orStart, orEnd - 1, rates);
+   if(copied <= 0) { g_rangeReady = false; return; }
+
+   double hi = -DBL_MAX, lo = DBL_MAX;
+   for(int i = 0; i < copied; i++)
+   {
+      hi = MathMax(hi, rates[i].high);
+      lo = MathMin(lo, rates[i].low);
+   }
+   g_orHigh     = hi;
+   g_orLow      = lo;
+   g_rangeReady = true;
+
+   if(InpDebugMode)
+      PrintFormat("LondonORB: range finalized H=%s L=%s (%d bars)",
+                  DoubleToString(hi, _Digits), DoubleToString(lo, _Digits), copied);
+}
+
+bool RangeSizeOK()
+{
+   if(!InpUseRangeFilter) return true;
+   double atr = GetATR();
+   if(atr <= 0) return false;
+   double size = g_orHigh - g_orLow;
+   return (size >= InpMinRangeATR * atr && size <= InpMaxRangeATR * atr);
+}
+
 //=== LIFECYCLE =====================================================
 int OnInit()
 {
