@@ -118,7 +118,8 @@ bool IsNewDay()
 {
    MqlDateTime d;
    TimeToStruct(TimeCurrent(), d);
-   if(d.day != g_lastDay) { g_lastDay = d.day; return true; }
+   // day_of_year avoids the day-of-month collision across months (e.g. Dec 15 / Jan 15)
+   if(d.day_of_year != g_lastDay) { g_lastDay = d.day_of_year; return true; }
    return false;
 }
 
