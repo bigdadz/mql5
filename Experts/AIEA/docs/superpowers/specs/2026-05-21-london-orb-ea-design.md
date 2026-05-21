@@ -99,14 +99,14 @@ LondonORB_EA.mq5
 | `InpTimeframe` | PERIOD_M5 | TF สำหรับ OR/signal |
 | `InpDebugMode` | false | log ละเอียด |
 
-### Session (⚠️ เวลา server ของโบรกเกอร์)
+### Session (⚠️ เวลา server ของโบรกเกอร์ — default อิง Exness ≈ GMT+0, ดู §8)
 | Input | Default | คำอธิบาย |
 |---|---|---|
-| `InpORStartHour` / `InpORStartMin` | 10 / 0 | เริ่มเก็บกรอบ OR |
-| `InpOREndHour` / `InpOREndMin` | 10 / 30 | จบกรอบ OR |
-| `InpTradeEndHour` / `InpTradeEndMin` | 14 / 0 | หยุดรับไม้ใหม่ |
+| `InpORStartHour` / `InpORStartMin` | 8 / 0 | เริ่มเก็บกรอบ OR (London open บน Exness GMT+0) |
+| `InpOREndHour` / `InpOREndMin` | 8 / 30 | จบกรอบ OR |
+| `InpTradeEndHour` / `InpTradeEndMin` | 12 / 0 | หยุดรับไม้ใหม่ |
 | `InpForceCloseEnable` | true | บังคับปิดท้ายวัน |
-| `InpForceCloseHour` / `InpForceCloseMin` | 22 / 0 | เวลาบังคับปิด |
+| `InpForceCloseHour` / `InpForceCloseMin` | 20 / 0 | เวลาบังคับปิด |
 
 ### Range / Signal
 | Input | Default | คำอธิบาย |
@@ -138,7 +138,7 @@ LondonORB_EA.mq5
 ### Filters (toggle อิสระทุกตัว)
 | Input | Default | คำอธิบาย |
 |---|---|---|
-| `InpMaxSpreadPoints` | 40 | spread guard — ข้ามถ้าเกิน |
+| `InpMaxSpreadPoints` | 40 | spread guard — ข้ามถ้าเกิน (ตั้ง `0` = ปิด guard) |
 | `InpUseRangeFilter` | true | กรองขนาดกรอบ OR |
 | `InpMinRangeATR` | 0.5 | กรอบต้อง ≥ ATR×ค่านี้ |
 | `InpMaxRangeATR` | 3.0 | กรอบต้อง ≤ ATR×ค่านี้ |
@@ -174,12 +174,19 @@ LondonORB_EA.mq5
 - New-day / new-bar detection ทนข้ามสุดสัปดาห์ (เทียบ `TimeToStruct().day` หรือวันเริ่มจาก `iTime`)
 - Daily DD: คำนวณจาก equity เทียบ `dayStartEquity`; เมื่อชน → ตาม `InpDDAction`
 
-## 8. การตั้งเวลา Server (ต้องทำก่อนใช้/เทสต์)
+## 8. การตั้งเวลา Server (Exness) — ต้องยืนยันก่อนใช้/เทสต์
 
-เวลา session เป็น **เวลา server ของโบรกเกอร์** ไม่ใช่เวลาท้องถิ่น/GMT — โบรกเกอร์ส่วนใหญ่ตั้ง server = GMT+2/+3 (ยุโรปตะวันออก) ทำให้ London open (08:00 GMT) ≈ 10:00–11:00 server. ผู้ใช้ต้อง:
-1. ดูเวลา server จาก Market Watch / `TimeCurrent()`
-2. ปรับ `InpORStartHour`/`InpOREndHour`/`InpTradeEndHour` ให้ตรงกับ London open ของ server ตัวเอง
+เวลา session เป็น **เวลา server ของโบรกเกอร์** ไม่ใช่เวลาท้องถิ่น/GMT
+
+**Exness:** server time ของ Exness โดยทั่วไป = **GMT+0** (ต่างจากโบรกยุโรปส่วนใหญ่ที่ GMT+2/+3) และ Exness มี DST (FX ส่วนใหญ่ตาม US DST) → นาฬิกา server อาจขยับ ~1 ชม. ตามฤดู. London open = 08:00 London time ⇒ บน server GMT+0 ≈ 08:00 server. Default ใน §5 ตั้งไว้ตามนี้ (OR 08:00–08:30)
+
+**กลไก self-calibration (อยู่ใน EA):** `OnInit` จะ `Print` เวลา server ปัจจุบัน (`TimeTradeServer()`) และ offset โดยประมาณ (`TimeTradeServer() − TimeGMT()`, ใช้ได้บน live; ใน tester จะเป็น 0) เพื่อให้ผู้ใช้เทียบแล้วปรับ input ได้ทันทีโดยไม่ต้องเดา
+
+**ขั้นตอนผู้ใช้:**
+1. เปิด EA / ดู log `OnInit` หรือ Market Watch clock → รู้เวลา server จริง
+2. ปรับ `InpORStartHour`/`InpOREndHour`/`InpTradeEndHour`/`InpForceCloseHour` ให้ครอบ London open ของ server ตัวเอง
 3. ตอน backtest ตั้งให้ตรงกับ server ของ tester (อาจต่างจาก live)
+4. **DST:** ตรวจช่วงเปลี่ยนเวลา (มี.ค./ต.ค.–พ.ย.) ว่า server ขยับหรือไม่ แล้วปรับ ±1 ชม. หากจำเป็น — auto-DST เป็น future enhancement (ไม่อยู่ใน v1)
 
 ## 9. กลยุทธ์การทดสอบและพิสูจน์ผล
 
@@ -192,4 +199,4 @@ LondonORB_EA.mq5
 
 ## 10. ค่า Default ตั้งต้น (ปรับได้ทั้งหมด — เป็นจุดเริ่ม optimize)
 
-OR 10:00–10:30, trade ถึง 14:00, force-close 22:00; buffer = ATR×0.10; TP = 1.8R; BE +1.0R; trailing เริ่ม +1.2R, ระยะ 200 pts; risk 1%/ไม้; daily DD 3%; ตัวกรองเปิดครบ 4 ตัว; spread guard 40 pts
+OR 08:00–08:30, trade ถึง 12:00, force-close 20:00 (server time, Exness GMT+0); buffer = ATR×0.10; TP = 1.8R; BE +1.0R; trailing เริ่ม +1.2R, ระยะ 200 pts; risk 1%/ไม้; daily DD 3%; ตัวกรองเปิดครบ 4 ตัว (toggle อิสระ); spread guard 40 pts (ตั้ง `InpMaxSpreadPoints=0` เพื่อปิด)
