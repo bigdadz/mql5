@@ -283,6 +283,42 @@ bool RetestConfirmed(ENUM_SIGNAL dir)
    return false;
 }
 
+//=== RISK ==========================================================
+// slPoints = stop distance in points (priceDistance / _Point).
+double CalculateLot(double slPoints)
+{
+   if(slPoints <= 0) return 0.0;
+
+   double balance   = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskMoney = balance * InpRiskPercent / 100.0;
+
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue <= 0 || tickSize <= 0) return 0.0;
+
+   double valuePerPoint = tickValue * (_Point / tickSize);
+   double slMoneyPerLot = slPoints * valuePerPoint;
+   if(slMoneyPerLot <= 0) return 0.0;
+
+   double lot = riskMoney / slMoneyPerLot;
+
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(step > 0) lot = MathFloor(lot / step) * step;
+   if(lot < minLot) lot = minLot;
+   if(lot > maxLot) lot = maxLot;
+   return lot;
+}
+
+bool IsDailyDDExceeded()
+{
+   if(g_dayStartEquity <= 0) return false;
+   double eq    = AccountInfoDouble(ACCOUNT_EQUITY);
+   double ddPct = (g_dayStartEquity - eq) / g_dayStartEquity * 100.0;
+   return ddPct >= InpMaxDailyDDPercent;
+}
+
 //=== LIFECYCLE =====================================================
 int OnInit()
 {
