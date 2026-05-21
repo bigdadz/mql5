@@ -506,5 +506,87 @@ bool CorrBlocked(int i, ENUM_SIGNAL dir)
    return false;
 }
 
-void OnTick()  { }
-void OnTimer() { }
+void UpdateDashboard() { }
+
+void ProcessSymbol(int i)
+{
+   // Manage any open position every tick
+   ManageTrailing(i);
+
+   if(InpForceCloseEnable && PastForceClose()) { CloseSym(i); return; }
+
+   if(!IsNewBar(i)) return;   // entry logic only on a new completed bar (per symbol)
+
+   int nowMin = MinutesOfDay(TimeCurrent());
+   if(!g_st[i].rangeReady && !InORWindow(i) && nowMin >= g_orEndH[i]*60 + g_orEndM[i])
+      FinalizeRange(i);
+
+   if(!g_st[i].rangeReady)   return;
+   if(g_st[i].tradedToday)   return;
+   if(!InTradingWindow(i))   return;
+   if(!RangeSizeOK(i))       return;
+
+   if(g_st[i].entryState == ENTRY_IDLE)
+   {
+      ENUM_SIGNAL sig = CheckBreakout(i);
+      if(sig != SIGNAL_NONE && TrendFilterOK(i,sig) && !NewsBlocked() && SpreadOK(i) && !CorrBlocked(i,sig))
+      {
+         if(InpUseRetest)
+         {
+            g_st[i].entryState       = ENTRY_ARMED;
+            g_st[i].armedDir         = sig;
+            g_st[i].armedLevel       = (sig == SIGNAL_BUY) ? g_st[i].orHigh : g_st[i].orLow;
+            g_st[i].armedBarsElapsed = 0;
+         }
+         else OpenTrade(i, sig);
+      }
+   }
+   else if(g_st[i].entryState == ENTRY_ARMED)
+   {
+      g_st[i].armedBarsElapsed++;
+      if(g_st[i].armedBarsElapsed > InpRetestTimeoutBars) g_st[i].entryState = ENTRY_IDLE;
+      else if(RetestConfirmed(i, g_st[i].armedDir) && !NewsBlocked() && SpreadOK(i)
+              && !CorrBlocked(i, g_st[i].armedDir))
+         OpenTrade(i, g_st[i].armedDir);
+   }
+}
+
+void OnTick()
+{
+   if(IsNewDay())
+   {
+      g_dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      g_ddStopped      = false;
+      g_newsWarned     = false;
+      for(int i = 0; i < g_symCount; i++)
+      {
+         g_st[i].tradedToday      = false;
+         g_st[i].rangeReady       = false;
+         g_st[i].entryState       = ENTRY_IDLE;
+         g_st[i].armedDir         = SIGNAL_NONE;
+         g_st[i].armedBarsElapsed = 0;
+         g_st[i].entryPrice       = 0.0;
+         g_st[i].initialRisk      = 0.0;
+      }
+   }
+
+   // Account-level daily DD breaker — checked every tick; latches for the day.
+   if(g_dayStartEquity > 0)
+   {
+      double eq    = AccountInfoDouble(ACCOUNT_EQUITY);
+      double ddPct = (g_dayStartEquity - eq) / g_dayStartEquity * 100.0;
+      if(g_ddStopped || ddPct >= InpMaxPortfolioDDPercent)
+      {
+         g_ddStopped = true;
+         if(InpDDAction == DD_CLOSE_ALL)
+            for(int i = 0; i < g_symCount; i++) CloseSym(i);
+         UpdateDashboard();
+         return;
+      }
+   }
+
+   for(int i = 0; i < g_symCount; i++) ProcessSymbol(i);
+   UpdateDashboard();
+}
+
+void OnTimer() { UpdateDashboard(); }
