@@ -346,5 +346,136 @@ bool NewsBlocked()
    return false;
 }
 
+double CalculateLot(int i, double slPoints)
+{
+   if(slPoints <= 0) return 0.0;
+   double balance   = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskMoney = balance * InpRiskPercent / 100.0;
+   double tickValue = SymbolInfoDouble(g_symbol[i], SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(g_symbol[i], SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue <= 0 || tickSize <= 0) return 0.0;
+   double valuePerPoint = tickValue * (SymPoint(i) / tickSize);
+   double slMoneyPerLot = slPoints * valuePerPoint;
+   if(slMoneyPerLot <= 0) return 0.0;
+   double lot = riskMoney / slMoneyPerLot;
+   double minLot = SymbolInfoDouble(g_symbol[i], SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(g_symbol[i], SYMBOL_VOLUME_MAX);
+   double step   = SymbolInfoDouble(g_symbol[i], SYMBOL_VOLUME_STEP);
+   if(step > 0) lot = MathFloor(lot/step)*step;
+   if(lot < minLot) lot = minLot;
+   if(lot > maxLot) lot = maxLot;
+   return lot;
+}
+
+bool SpreadOK(int i)
+{
+   if(g_maxSpread[i] <= 0) return true;
+   long sp = SymbolInfoInteger(g_symbol[i], SYMBOL_SPREAD);
+   return sp <= g_maxSpread[i];
+}
+
+bool ValidateStops(int i, double slPoints)
+{
+   long stopsLevel = SymbolInfoInteger(g_symbol[i], SYMBOL_TRADE_STOPS_LEVEL);
+   long spread     = SymbolInfoInteger(g_symbol[i], SYMBOL_SPREAD);
+   double minDist  = (double)(MathMax(stopsLevel, spread) + 10);
+   return slPoints >= minDist;
+}
+
+// True if this EA holds an open position on symbol i; fills dir if so.
+bool HasOpenPosition(int i, ENUM_SIGNAL &dir)
+{
+   dir = SIGNAL_NONE;
+   if(!PositionSelect(g_symbol[i])) return false;
+   if(PositionGetInteger(POSITION_MAGIC) != InpMagic) return false;
+   long t = PositionGetInteger(POSITION_TYPE);
+   dir = (t == POSITION_TYPE_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+   return true;
+}
+
+void OpenTrade(int i, ENUM_SIGNAL signal)
+{
+   double ask   = SymbolInfoDouble(g_symbol[i], SYMBOL_ASK);
+   double bid   = SymbolInfoDouble(g_symbol[i], SYMBOL_BID);
+   double entry = (signal == SIGNAL_BUY) ? ask : bid;
+   int    dg    = SymDigits(i);
+
+   double slBuf = InpSLBufferPoints * SymPoint(i);
+   double sl;
+   if(InpSLMode == SL_RANGE_OPPOSITE)
+      sl = (signal == SIGNAL_BUY) ? (g_st[i].orLow - slBuf) : (g_st[i].orHigh + slBuf);
+   else { double a = GetATR(i); sl = (signal == SIGNAL_BUY) ? (entry - a*InpSLATRmult) : (entry + a*InpSLATRmult); }
+
+   double slDist   = MathAbs(entry - sl);
+   double slPoints = slDist / SymPoint(i);
+   if(!ValidateStops(i, slPoints)) { if(InpDebugMode) PrintFormat("PortfolioORB %s: SL too tight", g_symbol[i]); return; }
+
+   double tp  = (signal == SIGNAL_BUY) ? (entry + InpTP_R*slDist) : (entry - InpTP_R*slDist);
+   double lot = CalculateLot(i, slPoints);
+   if(lot <= 0) { if(InpDebugMode) PrintFormat("PortfolioORB %s: lot=0", g_symbol[i]); return; }
+
+   sl = NormalizeDouble(sl, dg);
+   tp = NormalizeDouble(tp, dg);
+   trade.SetTypeFillingBySymbol(g_symbol[i]);   // per-symbol filling (Exness ECN)
+
+   bool ok = (signal == SIGNAL_BUY)
+             ? trade.Buy(lot, g_symbol[i], 0.0, sl, tp, "PortfolioORB")
+             : trade.Sell(lot, g_symbol[i], 0.0, sl, tp, "PortfolioORB");
+   if(ok)
+   {
+      g_st[i].entryPrice  = entry;
+      g_st[i].initialRisk = slDist;
+      g_st[i].tradedToday = true;
+      g_st[i].entryState  = ENTRY_DONE;
+      PrintFormat("PortfolioORB %s: %s lot=%s entry=%s SL=%s TP=%s", g_symbol[i],
+                  (signal==SIGNAL_BUY?"BUY":"SELL"), DoubleToString(lot,2),
+                  DoubleToString(entry,dg), DoubleToString(sl,dg), DoubleToString(tp,dg));
+   }
+   else PrintFormat("PortfolioORB %s: open FAILED retcode=%d (%s)", g_symbol[i],
+                    trade.ResultRetcode(), trade.ResultRetcodeDescription());
+}
+
+void CloseSym(int i)
+{
+   if(PositionSelect(g_symbol[i]) && PositionGetInteger(POSITION_MAGIC) == InpMagic)
+      trade.PositionClose(g_symbol[i]);
+}
+
+void ManageTrailing(int i)
+{
+   if(!PositionSelect(g_symbol[i])) return;
+   if(PositionGetInteger(POSITION_MAGIC) != InpMagic) return;
+
+   long   type  = PositionGetInteger(POSITION_TYPE);
+   double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+   double curSL = PositionGetDouble(POSITION_SL);
+   double curTP = PositionGetDouble(POSITION_TP);
+   int    dg    = SymDigits(i);
+   double price = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(g_symbol[i], SYMBOL_BID)
+                                              : SymbolInfoDouble(g_symbol[i], SYMBOL_ASK);
+   double risk = g_st[i].initialRisk;
+   if(risk <= 0) return;
+
+   double profit = (type == POSITION_TYPE_BUY) ? (price - entry) : (entry - price);
+   double rMult  = profit / risk;
+
+   if(rMult >= InpBE_TriggerR)
+   {
+      double be = NormalizeDouble(entry, dg);
+      bool needBE = (type == POSITION_TYPE_BUY)  ? (curSL < be)
+                  : (type == POSITION_TYPE_SELL) ? (curSL > be || curSL == 0) : false;
+      if(needBE) { trade.PositionModify(g_symbol[i], be, curTP); return; }
+   }
+   if(rMult >= InpTrailStartR)
+   {
+      double dist  = InpTrailDistPoints * SymPoint(i);
+      double newSL = (type == POSITION_TYPE_BUY) ? (price - dist) : (price + dist);
+      newSL = NormalizeDouble(newSL, dg);
+      bool needTrail = (type == POSITION_TYPE_BUY)  ? (newSL > curSL)
+                     : (type == POSITION_TYPE_SELL) ? (newSL < curSL || curSL == 0) : false;
+      if(needTrail) trade.PositionModify(g_symbol[i], newSL, curTP);
+   }
+}
+
 void OnTick()  { }
 void OnTimer() { }
