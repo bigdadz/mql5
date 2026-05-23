@@ -3,6 +3,8 @@
 ## Repo layout
 - **This repo IS the `MQL5/Experts/EAI/` folder.** Clone it directly into the MT5 data folder's `Experts/` dir (`git clone <url>` from inside `<MT5 data>/MQL5/Experts/` → produces `EAI/`). Repo root holds the EAs (`LondonORB_EA.mq5`, `PortfolioORB_EA.mq5`); `tools/`, `tests/`, `docs/` are siblings.
 - All repo-relative commands below run from the repo root (= `MQL5/Experts/EAI/`).
+- **EAs:** `LondonORB_EA.mq5` — single-symbol London ORB, 1 trade/day. `PortfolioORB_EA.mq5` — multi-symbol ORB: per-symbol OR window + state, account-level DD breaker, correlation guard.
+- **Designs & backtest results live in `docs/superpowers/`** (`specs/` = designs + results, `plans/` = build plans). Note: those docs predate the rename and still reference the old `Experts/AIEA/` paths — historical, not current.
 
 ## Build & test MQL5 headlessly (no MetaTrader GUI required)
 - **Compile:** `bash tools/compile.sh "<abs path to .mq5>"` → `[compile] PASS` / per-line errors. (homebrew `wine` + throwaway prefix `~/.wine_orb` holding a copy of the real `Include/`.)
