@@ -23,10 +23,14 @@ input ENUM_TIMEFRAMES InpTimeframe        = PERIOD_M5;
 input bool            InpDebugMode        = false;
 
 input group "Portfolio (per-symbol, comma-separated, same order)"
-input string InpSymbols        = "GBPUSDm,EURUSDm,USDJPYm,XAUUSDm";
-input string InpORStartHours   = "6,7,8,9";       // per symbol
-input string InpORWindowMins   = "30,30,15,60";   // per symbol (OR length)
-input string InpMaxSpreadPts   = "40,40,40,600";  // per symbol
+//input string InpSymbols        = "GBPUSDm,EURUSDm,USDJPYm,XAUUSDm";
+//input string InpORStartHours   = "6,7,8,9";       // per symbol
+//input string InpORWindowMins   = "30,30,15,60";   // per symbol (OR length)
+//input string InpMaxSpreadPts   = "40,40,40,600";  // per symbol
+input string InpSymbols="XAUUSDm";
+input string InpORStartHours="12";
+input string InpORWindowMins="15";
+input string InpMaxSpreadPts="600";
 
 input group "Session (shared) — trade window measured from each symbol's OR end"
 input int  InpTradeWindowMins  = 210;   // entries allowed for N min after OR end (210 = GBP 06:30->10:00)
