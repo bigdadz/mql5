@@ -46,7 +46,7 @@ for sh in "${START_HOURS[@]}"; do
 
     cat > "$INI" <<EOF
 [Tester]
-Expert=AIEA\\LondonORB_EA.ex5
+Expert=EAI\\LondonORB_EA.ex5
 Symbol=$SYMBOL
 Period=M5
 Optimization=0
